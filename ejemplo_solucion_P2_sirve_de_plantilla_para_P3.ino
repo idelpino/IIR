@@ -54,11 +54,12 @@
 //
 // - En primer lugar incluye las librerías necesarias y declara los elementos hardware que vamos a emplear
 //
-// - Después se crean las constantes que se utilizan generalmente como etiquetas para mejorar la legibilidad del programa
+// - Después se crean las constantes que se utilizan a lo largo del programa, generalmente son etiquetas para mejorar la 
+//   legibilidad del mismo.
 //
-// - A continuación se declaran unas estructuras de datos "structs" para guardar las distintas variables agrupadas de forma 
+// - A continuación se declaran unas estructuras de datos o "structs" para guardar las distintas variables agrupadas de forma 
 //   lógica. Por ejemplo todas las variables que tienen que ver con configuración (velocidades máximas de los motores, 
-//   tiempos que hay que esperar hasta poder volver a leer un sensor etc.) se agrupan en una estructura de tipo "Config", 
+//   tiempos que hay que esperar hasta poder volver a leer un sensor etc) se agrupan en una estructura de tipo "Config", 
 //   mientras que las distintas medidas de los sensores (como la distancia en centímetros detectada por el sensor de ultrasonidos)
 //   se guardan en una estructura de tipo "Data". Este planteamiento resulta muy ventajoso, ya que nos permitirá añadir
 //   elementos hardware de forma fácil sin tener que reescribir código, como se verá más adelante.
@@ -89,24 +90,21 @@
 //                                                    discretos "NO_OBSTACLE_DETECTED" "FAR_OBSTACLE_DETECTED" o "CLOSE_OBSTACLE_DETECTED".
 //
 //    3) Actualizar la máquina de estados: Se llama a la función genérica "updateFiniteStateMachine", esta función está preparada
-//                                         para hacer transiciones entre tareas utilizando la info de los sensores y el estado
-//                                         en el que se encuentra el robot, aunque en esta versión de la práctica, sólo se tiene
-//                                         en cuenta la info del sensor de ultrasonidos, pero la plantilla está preparada para 
-//                                         implementar lógicas más complejas, que probablemente harán falta en la práctica siguiente.
+//                                         para hacer transiciones entre tareas utilizando la información extraída de los sensores 
+//                                         y el estado en el que se encuentra el robot.
 //
 //    4) Calcular la acción adecuada: Para esto llamamos a una función genérica "controller" que en función del estado o tarea
-//                                    que se esté llevando a cabo, llama a una u otra función específica para calcular la salida adecuada
+//                                    que se esté llevando a cabo, llamará a una u otra función específica para calcular la salida adecuada
 //                                    para cada motor. Por ejemplo tenemos "controllerNoObstacleDetected" que implementa lo que hay que
 //                                    hacer con los motores en caso de que no se detecten obstáculos. En caso de querer añadir nuevos
 //                                    comportamientos o tareas, habrá que programar un controlador específico, como por ejemplo si
 //                                    queremos hacer un siguelíneas, haríamos algo así como "controllerLineFollower" y allí, en función
-//                                    de los datos del sensor de IR decidiríamos qué hacer con cada motor.
+//                                    de los datos extraídos del sensor de IR decidiríamos qué hacer con cada motor.
 //
-//   5) Refrescar interfaz de usuario: El sistema de timing es idéntico al implementado en la función para leer el sensor de ultrasonidos
-//                                     esta función ("refreshUserInterface") simplemente comprueba el tiempo, y cuando han transcurrido
-//                                     los milisegundos especificados en el struct de configuración, pasa a enviar la información 
-//                                     más importante por el puerto serie para poder monitorizar el sistema y ayudarnos en los procesos
-//                                     de depuración del código.  
+//    5) Refrescar interfaz de usuario: Esta función ("refreshUserInterface") simplemente comprueba el tiempo, y cuando han transcurrido
+//                                      los milisegundos especificados en el struct de configuración, pasa a enviar la información 
+//                                      más importante por el puerto serie para poder monitorizar el sistema y ayudarnos en los procesos
+//                                      de depuración del código.
 //
 //   Una vez terminados estos 5 puntos, el loop vuelve a iterar, y así indefinidamente! 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -187,12 +185,34 @@ struct Config
 struct Data
 {
   float detected_distance_in_centimeters;
+  
   //...añadir más campos para guardar datos en caso de añadir nuevos sensores...
+  
 };
 
 struct Information
 {
-  int obstacle_presence;
+  int   obstacle_presence;       // Para dar valor a esta variable usaremos las "etiquetas" 
+                                 // declaradas al principio del código, (NO_OBSTACLE_DETECTED, 
+                                 // FAR_OBSTACLE_DETECTED...). Esta variable se usará para 
+                                 // determinar las transiciones entre estados.
+                                 
+  float obstacle_distance_in_cm; // En el caso del sensor de ultrasonidos se da la circunstancia de que los datos que nos
+                                 // devuelve en realidad ya están preprocesados, dado que el sensor en realidad lo que mide
+                                 // es la diferencia de tiempos entre que envía un pulso de ultrasonido y le llega el eco,
+                                 // a esta diferencia se le aplica después la velocidad de propagación del sonido para ESTIMAR
+                                 // la distancia a la que se encuentra el objeto que ha provocado la reflexión. Hay que decir 
+                                 // que la velocidad de propagación depende de distintas variables, tales como la presión
+                                 // o la temperatura, y que la reflexión dependerá entre otras cosas del tamaño, la forma y el 
+                                 // material de que esté hecho el objeto sobre el que rebota la onda (por ejemplo, un material blando 
+                                 // como la lana puede absorber el ultrasonido y ser "invisible" para el sensor),
+                                 // por lo que cuando el sensor nos devuelva centímetros tenemos que ser
+                                 // conscientes de que las medidas tienen una incertidumbre--> la precisión de los sensores no es
+                                 // infinita!! y el error cero no existe!!
+                                 //
+                                 // A lo que iba, que cuando usamos la función de MakeBlock distanceCm(); para leer el ultrasonido
+                                 // lo que nos devuelve ya es información útil (no sólo datos) y por este motivo la vamos a incluir
+                                 // en el struct "Information". 
   
   // ...añadir aquí variables para guardar la información extraída por los procesadores
   // a partir de la información de los nuevos sensores que se vayan a instalar.
@@ -245,7 +265,8 @@ void setup() {
   st_data_.detected_distance_in_centimeters = IMPOSSIBLE_DISTANCE; // Comenzaremos con valor inválido, para detectar cuándo hemos tenido una lectura válida
 
   // Información extraída por los procesadores
-  st_information_.obstacle_presence =  NOT_KNOWN; // Inicializamos en valor inválido.
+  st_information_.obstacle_presence =  NOT_KNOWN;                // Inicializamos en valor inválido.
+  st_information_.obstacle_distance_in_cm = IMPOSSIBLE_DISTANCE;
 
   // Valor para pasar a motores (actuación)
   st_actions_.left_motor_pwm = 0;  // Inicializamos a cero por seguridad, aunque hay otros puntos del programa en los que se checkea todo para no enviar acciones
@@ -356,7 +377,20 @@ int processUltrasonicSensorData(float distance_in_cm)
 Information processData(Data st_data)
 {
   Information st_info;
+
+  ///////////////////////////////////////
+  // Procesamos el sensor de ultrasonidos
+  ///////////////////////////////////////
+  // Primero copiamos la distancia en centímetros del struct de datos al de información, porque 
+  // como ya se ha comentado anteriormente, el driver de MakeBlock nos hace una parte del procesado, 
+  // por lo que la distancia en centímetros que retorna el sensor se puede considerar "información" 
+  // y no sólo "datos".
+  st_info.obstacle_distance_in_cm = st_data.detected_distance_in_centimeters;
+  //                                                                                                                                                           
+  // A continuación generamos la información de tipo categorial (hay via libre, existe un obstáculo, 
+  // está lejos, está cerca...) a partir de la distancia detectada por el sensor.                                                                          
   st_info.obstacle_presence = processUltrasonicSensorData(st_data.detected_distance_in_centimeters);
+  /////////////////////////////////////////
 
   // ...Aquí habría que añadir las distintas llamadas a los procesadores específicos para los datos de 
   // cada sensor
@@ -440,7 +474,7 @@ Actions controllerMovingForwardMax(Config st_config)
 }
 
 // Controlador específico para girar mientras se avanza.
-Actions controllerForwardProportional(Config st_config, Data st_meas)
+Actions controllerForwardProportional(Config st_config, Information st_info)
 {
   Actions st_actions;
 
@@ -461,7 +495,7 @@ Actions controllerForwardProportional(Config st_config, Data st_meas)
   // para que quede en el intervalo [0, max_speed_pwm_value]
 
   // como el PWM tiene que ser un número entero, primero hacemos un casting a flotante "(float)max_speed_pwm_value"
-  float right_pwm = (float)st_config.max_speed_pwm_value * (st_meas.detected_distance_in_centimeters - CLOSE_OBJECT_DISTANCE_THRESHOLD_CM) / (FAR_OBJECT_DISTANCE_THRESHOLD_CM - CLOSE_OBJECT_DISTANCE_THRESHOLD_CM);
+  float right_pwm = (float)st_config.max_speed_pwm_value * (st_info.obstacle_distance_in_cm - CLOSE_OBJECT_DISTANCE_THRESHOLD_CM) / (FAR_OBJECT_DISTANCE_THRESHOLD_CM - CLOSE_OBJECT_DISTANCE_THRESHOLD_CM);
 
   // y luego redondeamos y pasamos a tipo int
   st_actions.right_motor_pwm = (int)round(right_pwm);
@@ -472,7 +506,7 @@ Actions controllerForwardProportional(Config st_config, Data st_meas)
 
 
 // Controlador específico para girar mientras retrocedemos.
-Actions controllerBackwardLeftProportional(Config st_config, Data st_meas)
+Actions controllerBackwardLeftProportional(Config st_config, Information st_info)
 {
   Actions st_actions;
 
@@ -492,7 +526,7 @@ Actions controllerBackwardLeftProportional(Config st_config, Data st_meas)
   // para que quede en el intervalo [max_speed_pwm_value, 0]
 
   // al igual que antes, primero hacemos un casting a flotante
-  float left_pwm = (float)st_config.max_reverse_speed_pwm_value * (1.0 - (st_meas.detected_distance_in_centimeters / CLOSE_OBJECT_DISTANCE_THRESHOLD_CM ) );
+  float left_pwm = (float)st_config.max_reverse_speed_pwm_value * (1.0 - (st_info.obstacle_distance_in_cm / CLOSE_OBJECT_DISTANCE_THRESHOLD_CM ) );
 
   // redondeamos y pasamos a tipo int
   st_actions.left_motor_pwm = (int)round(left_pwm);
@@ -506,7 +540,7 @@ Actions controllerBackwardLeftProportional(Config st_config, Data st_meas)
 
 // Función genérica que llama al controlador específico adecuado en función de la tarea
 // que se deba realizar. 
-Actions controller(int current_state, Data st_data, Config st_config)
+Actions controller(int current_state, Information st_info, Config st_config)
 {
   Actions st_actions;
   
@@ -522,11 +556,11 @@ Actions controller(int current_state, Data st_data, Config st_config)
     break;
     
     case MOVING_FORWARD_PROPORTIONAL:
-      st_actions = controllerForwardProportional(st_config, st_data);
+      st_actions = controllerForwardProportional(st_config, st_info);
     break;
 
     case MOVING_BACKWARD_LEFT_PROPORTIONAL:
-      st_actions = controllerBackwardLeftProportional(st_config, st_data);
+      st_actions = controllerBackwardLeftProportional(st_config, st_info);
     break;
 
     //... si hubiesen otros controladores habría que llamarlos desde otros casos de este switch...//
@@ -585,7 +619,7 @@ int execute(Actions st_actions, Config st_config)
 }
 
 // Función encargada de refrescar la info para el usuario a intervalos de tiempo correctos
-void refreshUserInterface (Data st_meas, int current_state, Actions st_actions, int error, Config st_config)
+void refreshUserInterface (Information st_info, int current_state, Actions st_actions, int error, Config st_config)
 {    
   // Procedemos con la parte de sincronización, esta funciona igual que la que hemos empleado antes en la función readUltraSensor, 
   // (en esa función están todos los detalles comentados, por lo que ahora no los repetiremos)
@@ -597,11 +631,68 @@ void refreshUserInterface (Data st_meas, int current_state, Actions st_actions, 
   if ( current_time - previous_time > st_config.user_interface_refresh_period_in_millis )
   {
     // en caso de que sea momento de refrescar la info, pasamos a escribir en el puerto serie:
-    Serial.print("Distance reading = ");
-    Serial.println(st_meas.detected_distance_in_centimeters);
-  
+
+    // Primero enviamos la información de distancia captada mediante el sensor de ultrasonidos.
+    Serial.print("Distance information = ");
+    Serial.println(st_info.obstacle_distance_in_cm);
+
+    // Después enviamos la información categorial (no numérica) sobre la detección de obstáculos.
+    // al no ser numérica, lo que hacemos es interpretarla con un switch y luego enviar un mensaje 
+    // en texto con la explicación.
+    Serial.print("Categorical information based on distance: ");
+    switch(st_info.obstacle_presence)
+    {
+      case NOT_KNOWN:
+        Serial.println("Warning: It was impossible to read the sensor!!");
+      break;
+        
+      case NO_OBSTACLE_DETECTED:
+        Serial.println("No obstacle detected...");
+      break;
+
+      case FAR_OBSTACLE_DETECTED:
+        Serial.println("Far obstacle detected!");
+      break;
+
+      case CLOSE_OBSTACLE_DETECTED:
+        Serial.println("Close obstacle detected!");
+      break;
+      
+      // El caso default es el que se lanza si ninguna de las anteriores se cumplen, 
+      // si esto ocurriera es que hay un valor raro y nos interesará verlo durante el depurado. 
+      default:
+        Serial.println("Warning: in variable st_info.obstacle_presence --> unexpected value!!");
+      break;
+    }
+
+
+    // A continuación informamos sobre el estado, como esta también es una variable categórica
+    // lo que hacemos es poner un switch y enviar un mensaje descriptivo del estado actual,
+    // esto es importante para el depurado, ya que leer "State = 1" no es muy informativo, mientras
+    // que leer "State = moving forward at maximum speed" sí que aporta información.    
     Serial.print("State = ");
-    Serial.println(current_state);
+    switch(current_state)
+    {
+      case STOP:
+        Serial.println("Vehicle stopped!");
+      break;
+
+      case MOVING_FORWARD_MAX:
+        Serial.println("moving forward at maximum speed!");
+      break;
+
+      case MOVING_FORWARD_PROPORTIONAL:
+        Serial.println("moving forward and turning!");
+      break;
+
+      case MOVING_BACKWARD_LEFT_PROPORTIONAL:
+        Serial.println("moving backward and turning!");
+      break;
+
+      default:
+        Serial.println("Warning: in variable current_state --> unexpected value!!");
+      break;
+    }
     
     Serial.print("Left motor pwm = ");
     Serial.println(st_actions.left_motor_pwm);
@@ -633,13 +724,13 @@ void loop() {
 
   // Calculamos las acciones que tenemos que aplicar a los distintos motores, en función del
   // estado y las lecturas de los sensores
-  st_actions_ = controller(current_state, st_data_, st_config_);
+  st_actions_ = controller(current_state, st_information_, st_config_);
   
   // Pasamos a motores las acciones calculadas
   int error = execute(st_actions_, st_config_);
 
   // Publicamos info importante para el debug
- refreshUserInterface(st_data_, current_state, st_actions_, error, st_config_);
+ refreshUserInterface(st_information_, current_state, st_actions_, error, st_config_);
 
  // ... y volvemos a iterar!
 }
