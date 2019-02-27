@@ -132,14 +132,17 @@ MeDCMotor right_motor(M2);
 // también se pueden declarar como constantes determinadas "etiquetas" que luego se usan en el código, esto resulta muy útil
 // para mejorar la legibilidad.
 
-// Umbrales de distancia:
+// Umbrales de distancia: Se utilizarán para generar información de tipo categorial (clasificando los obstáculos como cercanos, lejanos o no-obstáculos)
+// que se empleará para decidir las transiciones de la máquina de estados.
 const float FAR_OBJECT_DISTANCE_THRESHOLD_CM   = 40.0; // Cualquier obstáculo a una distancia mayor de la definida aquí se considera que no
-                                                       // es un obstáculo, y por lo tanto el vehículo puede continuar recto.
+                                                       // es un obstáculo.
 
 const float CLOSE_OBJECT_DISTANCE_THRESHOLD_CM = 20.0; // Si la distancia detectada está en el intervalo [CLOSE_OBJECT_DISTANCE_CM, FAR_OBJECT_DISTANCE_CM]
-                                                       // el vehículo girará mientras avanza.
-                                                       // Cualquier distancia por debajo del unbral CLOSE_OBJECT_DISTANCE_CM, provocará que el 
-                                                       // vehículo retroceda mientras gira.
+                                                       // el obstáculo se considerará en zona lejana.
+                                                       // Cualquier obstáculo por debajo del unbral CLOSE_OBJECT_DISTANCE_CM se considerará en campo cercano.
+
+// Valor para marcar como inválidos los datos leidos con el ultrasonidos
+const float IMPOSSIBLE_DISTANCE = -1.0;
 
 // Valores que puede tomar la información extraída a partir de los datos del sensor de ultrasonidos:
 const int NO_OBSTACLE_DETECTED    =  0; // En estos casos, al tratarse de un valor categorial (no númerico) los valores de las etiquetas no son importantes, 
@@ -149,12 +152,12 @@ const int NOT_KNOWN               = -1; // Esta etiqueta la ponemos en negativo 
                                         // haya dado una lectura errónea.
 
 // States
-const int STOP                              = 0;
-const int MOVING_FORWARD_MAX                = 1;
-const int MOVING_FORWARD_PROPORTIONAL       = 2;
-const int MOVING_BACKWARD_LEFT_PROPORTIONAL = 3;
-
-const float IMPOSSIBLE_DISTANCE = -1.0;
+const int IMPOSSIBLE_STATE                  = -1; // Estos valores "imposibles" son muy útiles durante el depurado, ya que permiten lanzar 
+                                                  // warnings en caso de que alguna variable no se haya inicializado correctamente.
+const int STOP                              =  0;
+const int MOVING_FORWARD_MAX                =  1;
+const int MOVING_FORWARD_WHILE_TURNING      =  2;
+const int MOVING_BACKWARD_WHILE_TURNING     =  3;
 
 const int EXECUTION_ERROR = -1;
 const int EXECUTION_SUCCESSFUL = 0;
@@ -403,44 +406,136 @@ Information processData(Data st_data)
 // de los datos de los sensores.
 int updateFiniteStateMachine(Information st_information)
 {
-  static int state = STOP; // Inicializamos esta variable estática con un valor inicial por defecto para
-                           // poder detectar errores en la fase de debug
-                           // En este caso la variable no necesitaría ser declarada como estática ya que
-                           // el estado siguiente no depende del estado anterior (solo depende de la lectura
-                           // del sensor) sin embargo habrá muchas ocasiones en las que se transitará a uno 
-                           // u otro estado dependiendo tanto de las informaciones de los sensores como del 
-                           // estado concreto en el que el robot se encuentre.
-
-  switch(st_information.obstacle_presence)
-  {
-    case NOT_KNOWN:
-      state = STOP;  // Si hay error en el sensor pararemos motores.
-    break;
-
-    case NO_OBSTACLE_DETECTED:
-      state = MOVING_FORWARD_MAX; // Si no se detectan obstáculos nos moveremos hacia adelante a la 
-                                  // velocidad máxima permitida por el struct de configuración
-    break;
-
-    case FAR_OBSTACLE_DETECTED:
-      state = MOVING_FORWARD_PROPORTIONAL; // En caso de que se detecte un obstáculo lejano, continuaremos
-                                           // la marcha hacia adelante usando un controlador proporcional
-                                           // con la distancia (más detalles en las implementaciones 
-                                           // de los controladores específicos).
-    break;
-
-    case CLOSE_OBSTACLE_DETECTED:
-      state = MOVING_BACKWARD_LEFT_PROPORTIONAL; // Si el obstáculo se encuentra en la zona cercana se hará
-                                                 // retroceder al vehículo mientras gira. También implementaremos
-                                                 // un control proporcional a la distancia, como se verá en la sección
-                                                 // de controladores específicos.
-    break;
-    default:
-      state = STOP; // En caso de que venga algún valor extraño pararíamos el vehículo.
-    break;
-  }
+  static int previous_state = STOP; // Inicializamos esta variable estática con un valor inicial por defecto para
+                                    // poder detectar errores en la fase de debug, al ser estática sólo tomará el
+                                    // valor de inicialización en la primera ejecución de esta función. En las 
+                                    // siguientes iteraciones conservará el valor anterior, aunque se salga y se
+                                    // vuelva a entrar en la función. 
   
-  return(state);
+  int current_state =  IMPOSSIBLE_STATE; // Esta variable tomará valor en función de las entradas y del estado anterior, por
+                                         // lo que no es necesario que sea de tipo "static". La inicializamos a valor
+                                         // inválido para facilitar el depurado: si al salir de esta función la variable
+                                         // continúa teniendo valor inválido esto querrá decir que ha habido algún 
+                                         // problema!
+
+  // En caso de que la lectura del sensor haya sido incorrecta nos iremos a estado "STOP" independientemente
+  // del estado anterior, por lo que pondremos una estructura if-else antes del switch:
+  if(st_information.obstacle_presence == NOT_KNOWN)
+  {
+    current_state =  STOP;
+  }
+  else
+  {
+    // En  caso de que se haya podido extraer la información a partir de los datos del sensor pasamos a la implementación
+    // de la lógica de la máquina de estados:
+     
+    switch(previous_state) // En este switch nos vamos a fijar en el estado en el que se encontraba el vehículo
+                           // en el momento en el que se recibe la nueva información, y en función tanto del estado
+                           // anterior como de la información sensorial, decidiremos cual va a ser nuestro próximo estado.
+    {
+      case STOP:
+        // En caso de que estuviéramos parados, esperaremos la señal de NO_OBSTACLE_DETECTED
+        // para iniciar la marcha a velocidad máxima hacia adelante, es decir de este estado sólo
+        // saldremos cuando no se detecten obstáculos.
+        if(st_information.obstacle_presence == NO_OBSTACLE_DETECTED)
+        {
+          current_state = MOVING_FORWARD_MAX;
+        }
+        else
+        {
+          current_state = STOP;
+        }
+      break;
+
+      case MOVING_FORWARD_MAX:
+        // En caso que estuviéramos avanzando hacia adelante:
+        
+        // a) si no detectemos obstáculos continuaremos la marcha, por lo que no hará falta cambiar el estado.
+        if(st_information.obstacle_presence == NO_OBSTACLE_DETECTED)
+        {
+          current_state = MOVING_FORWARD_MAX;
+        }
+        else
+        {
+          // b) En caso de que aparezca de repente un obstáculo cercano, nos iremos a STOP
+          if(st_information.obstacle_presence == CLOSE_OBSTACLE_DETECTED)
+          {
+            current_state = STOP;
+          }
+          else
+          {
+            // c) En caso de que aparezca un obstáculo lejano pasamos a girar mientras avanzamos
+            if(st_information.obstacle_presence == FAR_OBSTACLE_DETECTED)
+            {
+              current_state = MOVING_FORWARD_WHILE_TURNING;
+            }
+          }
+        }
+      break;
+
+      case MOVING_FORWARD_WHILE_TURNING:
+        // En caso de que estuviéramos girando mientras avanzamos:
+        
+        // a) Si detectamos un objeto lejano, mantendremos el estado en "girar mientras avanzamos"
+        if(st_information.obstacle_presence == FAR_OBSTACLE_DETECTED)
+        {
+          current_state = MOVING_FORWARD_WHILE_TURNING;
+        }
+        else
+        {
+          // b) En caso de que desaparezca el obstáculo pasaremos a ir hacia adelante sin girar
+          if(st_information.obstacle_presence == NO_OBSTACLE_DETECTED)
+          {
+            current_state = MOVING_FORWARD_MAX;
+          }
+          else
+          {
+            // c) En caso de que el obstáculo entre a campo cercano pasamos a retroceder mientras giramos
+            if(st_information.obstacle_presence == CLOSE_OBSTACLE_DETECTED)
+            {
+              current_state = MOVING_BACKWARD_WHILE_TURNING;
+            }
+          }
+        }
+          
+      break;
+
+      case MOVING_BACKWARD_WHILE_TURNING:
+        // En caso de que estuviéramos girando mientras retrocedemos:
+        
+        // a) Si detectemos el objeto en campo cercano, mantendremos el estado de "girar mientras 
+        // retrocedemos"
+        if(st_information.obstacle_presence == CLOSE_OBSTACLE_DETECTED)
+        {
+          current_state = MOVING_BACKWARD_WHILE_TURNING;
+        }
+        else
+        {
+          // b) En caso de que desaparezca el obstáculo pasaremos a ir hacia adelante sin girar
+          if(st_information.obstacle_presence == NO_OBSTACLE_DETECTED)
+          {
+            current_state = MOVING_FORWARD_MAX;
+          }
+          else
+          {
+            // c) En caso de que el obstáculo pase a campo lejano pasamos a avanzar mientras giramos
+            if(st_information.obstacle_presence == FAR_OBSTACLE_DETECTED)
+            {
+              current_state = MOVING_FORWARD_WHILE_TURNING;
+            }
+          }
+        }
+
+      break;
+    }
+  }
+
+  // Una vez que hemos calculado el estado pasamos a guardar el resultado en la variable estática, 
+  // ya que el estado actual pasará a ser el estado anterior en la siguiente iteración:
+  previous_state = current_state;
+
+  // Y retornamos el valor calculado!
+  return(current_state);
 }
 
 // Controlador específico para parar motores
@@ -474,7 +569,7 @@ Actions controllerMovingForwardMax(Config st_config)
 }
 
 // Controlador específico para girar mientras se avanza.
-Actions controllerForwardProportional(Config st_config, Information st_info)
+Actions controllerForwardRightProportional(Config st_config, Information st_info)
 {
   Actions st_actions;
 
@@ -555,11 +650,11 @@ Actions controller(int current_state, Information st_info, Config st_config)
 
     break;
     
-    case MOVING_FORWARD_PROPORTIONAL:
-      st_actions = controllerForwardProportional(st_config, st_info);
+    case MOVING_FORWARD_WHILE_TURNING:
+      st_actions = controllerForwardRightProportional(st_config, st_info);
     break;
 
-    case MOVING_BACKWARD_LEFT_PROPORTIONAL:
+    case MOVING_BACKWARD_WHILE_TURNING:
       st_actions = controllerBackwardLeftProportional(st_config, st_info);
     break;
 
@@ -673,6 +768,9 @@ void refreshUserInterface (Information st_info, int current_state, Actions st_ac
     Serial.print("State = ");
     switch(current_state)
     {
+      case IMPOSSIBLE_STATE:
+        Serial.println("Warning: current_state variable not initialized!!");
+      break;
       case STOP:
         Serial.println("Vehicle stopped!");
       break;
@@ -681,12 +779,12 @@ void refreshUserInterface (Information st_info, int current_state, Actions st_ac
         Serial.println("moving forward at maximum speed!");
       break;
 
-      case MOVING_FORWARD_PROPORTIONAL:
-        Serial.println("moving forward and turning!");
+      case MOVING_FORWARD_WHILE_TURNING:
+        Serial.println("moving forward while turning!");
       break;
 
-      case MOVING_BACKWARD_LEFT_PROPORTIONAL:
-        Serial.println("moving backward and turning!");
+      case MOVING_BACKWARD_WHILE_TURNING:
+        Serial.println("moving backward while turning!");
       break;
 
       default:
