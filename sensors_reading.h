@@ -55,7 +55,7 @@ Data readSensors(Config st_config, Hardware& st_hardware)
                                                                   // lectura del sensor
   
   // Llamamos a la función que lee el sensor de ultrasonidos
-  //st_meas.detected_distance_in_centimeters = readUltraSensor(st_config, st_hardware);
+  st_meas.detected_distance_in_centimeters = readUltraSensor(st_config, st_hardware);
 
   // Si tuvieramos más sensores, habría que añadir las funciones para leerlos y guardar los
   // datos en otros campos del struct "st_meas"
